@@ -1,0 +1,81 @@
+---
+title: "Activity Classes Prediction"
+author: "Leo"
+date: "`r format(Sys.time(), '%Y %B %d')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE, cache.lazy = FALSE)
+set.seed(53496)  # setting the RNG seed
+library(caret)
+library(parallel)
+library(doParallel)
+```
+
+## Synopsis
+This project is to predict in which manner exercise was done by people.  A random forest model is trained based on data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants.  The model is then made use of to predict 20 different test cases.
+
+## Introduction
+In this report, we shall first do data cleansing on the training data, trying to have an idea on it and see whether the problem size can be reduced or not.  Then we are going to fit a model, with cross validation, based on the training data.  Finally we use the model to predict 20 test cases.
+
+### Data Preparation
+We first load the data and try to have a concept of the features.
+```{r exp_ana}
+dat = read.csv("../pml-training.csv")
+dim(dat)
+head(names(dat),20)
+str(dat$X);head(dat$user_name)
+```
+We decide to take out feature "X" as it is just the ID of each record, "user_name" and those "time stamp" features because they are not relevant to the analysis at all.
+```{r take_out_var}
+dat <- subset(dat, select=-c(1,2,3,4,5))
+```
+
+According to the related [research paper](http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf), there are eight calculated features for each of the four sensors, which correspond to the feature names with prefixes "kurtosis_", "skewness_", "max_", "min_", "amplitude_", "var_", "avg_", and "stddev_".  These features contain many "NA" or blank value, as shown below:
+```{r show_calculated_feature}
+col_na_cnt = colSums(is.na(dat) | dat == "")
+head(col_na_cnt[col_na_cnt>0],20)
+```
+So we are going to remove those calculated features and only use the raw data to do the training.
+```{r removed_calculated_feature}
+dat <- dat[,-which(grepl("^(kurtosis_|skewness_|max_|min_|amplitude_|var_|avg_|stddev)", names(dat)))]
+dim(dat)
+```
+
+## Model Training
+In this report, we are going to train a random forest model with 10-fold cross validation, which is a common try when doing CV, to do the prediction.  We also try to speed up the training process by running the code in parallel environment.
+
+### Training Setup
+```{r env_setup}
+# setup train method
+tr_control <- trainControl(method="cv", number=10, savePredictions = T, allowParallel = T)
+
+# setup parallel environment
+cluster <- makeCluster(8)
+registerDoParallel(cluster)
+```
+
+### Random Forest Training
+```{r train_RF}
+modRF <- train(classe ~ ., data=dat, trControl = tr_control, method="rf", prox=T, na.action=na.omit)
+
+stopCluster(cluster) # De-register parallel cluster
+registerDoSEQ()
+```
+
+### Expected Out of Sample Error
+We now take a look of the properties of the trained random forest model:
+```{r model_summary}
+modRF$finalModel
+modRF$results$Accuracy
+```
+The accuracy is `r max(modRF$results$Accuracy)`, and we estimate the out of sample error is 0.14%.
+
+## Prediction
+Finally, we are going to predict the class of test data set using the trained model.
+```{r pred}
+testset = read.csv("../pml-testing.csv")
+pred = predict(modRF, testset)
+pred
+```
